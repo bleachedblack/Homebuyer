@@ -4,6 +4,10 @@ import PropertyCard from './components/PropertyCard';
 import SavedProperties from './components/SavedProperties';
 import type { Property, SearchResult } from './types/property';
 
+// Empty in dev (Vite proxy forwards /api → localhost:3001).
+// Set VITE_API_URL to your Railway backend URL for production.
+const API = import.meta.env.VITE_API_URL ?? '';
+
 export default function App() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
@@ -18,7 +22,7 @@ export default function App() {
     setSearchResults([]);
     setSelectedProperty(null);
     try {
-      const res = await fetch(`/api/property/search?address=${encodeURIComponent(address)}`);
+      const res = await fetch(`${API}/api/property/search?address=${encodeURIComponent(address)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Search failed');
       if (data.length === 0) throw new Error('No listings found for that address. Try including the city and state.');
@@ -35,7 +39,7 @@ export default function App() {
     setError(null);
     setSearchResults([]);
     try {
-      const res = await fetch(`/api/property/details?propertyId=${result.propertyId}`);
+      const res = await fetch(`${API}/api/property/details?propertyId=${result.propertyId}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed to load property');
       setSelectedProperty(data);
