@@ -13,9 +13,15 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 app.use(
   cors({
     origin: (origin, cb) => {
-      // allow server-to-server calls (no origin) and listed origins
-      if (!origin || allowedOrigins.includes(origin)) cb(null, true);
-      else cb(new Error(`CORS: ${origin} not allowed`));
+      if (!origin) return cb(null, true);
+      // '*' in the list means allow all origins
+      if (allowedOrigins.includes('*')) return cb(null, true);
+      // wildcard suffix match, e.g. '*.vercel.app'
+      const allowed = allowedOrigins.some((o) => {
+        if (o.startsWith('*.')) return origin.endsWith(o.slice(1));
+        return o === origin;
+      });
+      allowed ? cb(null, true) : cb(new Error(`CORS: ${origin} not allowed`));
     },
   })
 );
