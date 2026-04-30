@@ -64,7 +64,7 @@ export default function App() {
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div>
             <h1 className="text-xl font-black tracking-tight">
-              Home<span className="text-blue-400">Scout</span>
+              Hirsch-Hock <span className="text-blue-400">Homebuyer</span>
             </h1>
             <p className="text-xs text-slate-500">Personalized home buying analysis</p>
           </div>
