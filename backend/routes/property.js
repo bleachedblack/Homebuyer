@@ -41,4 +41,34 @@ router.get('/details', async (req, res) => {
   }
 });
 
+// Debug endpoint — open in browser to diagnose Redfin connectivity
+router.get('/debug', async (req, res) => {
+  const axios = require('axios');
+  const key = process.env.SCRAPER_API_KEY;
+  const targetUrl =
+    'https://www.redfin.com/stingray/do/location-autocomplete?location=dallas+tx&v=2';
+  const fetchUrl = key
+    ? `http://api.scraperapi.com/?api_key=${key}&url=${encodeURIComponent(targetUrl)}`
+    : targetUrl;
+
+  try {
+    const result = await axios.get(fetchUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+      timeout: 20000,
+    });
+    res.json({
+      scraperApiKeySet: !!key,
+      httpStatus: result.status,
+      dataPreview: String(result.data).slice(0, 300),
+    });
+  } catch (err) {
+    res.json({
+      scraperApiKeySet: !!key,
+      error: err.message,
+      httpStatus: err.response?.status ?? null,
+      dataPreview: String(err.response?.data ?? '').slice(0, 300),
+    });
+  }
+});
+
 module.exports = router;
