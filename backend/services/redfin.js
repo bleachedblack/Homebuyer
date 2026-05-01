@@ -9,13 +9,21 @@ const HEADERS = {
   Referer: 'https://www.redfin.com',
 };
 
+// Route through ScraperAPI when key is set — needed on cloud hosts
+// where Redfin blocks the IP. Sign up free at scraperapi.com.
+function buildUrl(targetUrl) {
+  const key = process.env.SCRAPER_API_KEY;
+  if (!key) return targetUrl;
+  return `http://api.scraperapi.com/?api_key=${key}&url=${encodeURIComponent(targetUrl)}`;
+}
+
 function parse(raw) {
   const str = typeof raw === 'string' ? raw : JSON.stringify(raw);
   return JSON.parse(str.replace(/^\{\}&& ?/, ''));
 }
 
 async function get(url) {
-  const res = await axios.get(url, { headers: HEADERS, timeout: 15000 });
+  const res = await axios.get(buildUrl(url), { headers: HEADERS, timeout: 20000 });
   return parse(res.data);
 }
 
