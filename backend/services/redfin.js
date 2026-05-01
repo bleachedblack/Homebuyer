@@ -1,137 +1,141 @@
 const axios = require('axios');
 
-const BASE = 'https://www.redfin.com/stingray';
-const HEADERS = {
-  'User-Agent':
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-  Accept: 'application/json, text/plain, */*',
-  'Accept-Language': 'en-US,en;q=0.9',
-  Referer: 'https://www.redfin.com',
-};
-
-// Route through ScraperAPI when key is set — needed on cloud hosts
-// where Redfin blocks the IP. Sign up free at scraperapi.com.
-function buildUrl(targetUrl) {
-  const key = process.env.SCRAPER_API_KEY;
-  if (!key) return targetUrl;
-  return `http://api.scraperapi.com/?api_key=${key}&url=${encodeURIComponent(targetUrl)}`;
-}
-
-function parse(raw) {
-  const str = typeof raw === 'string' ? raw : JSON.stringify(raw);
-  return JSON.parse(str.replace(/^\{\}&& ?/, ''));
-}
-
-async function get(url) {
-  const res = await axios.get(buildUrl(url), { headers: HEADERS, timeout: 20000 });
-  return parse(res.data);
-}
+const RAPID_KEY = process.env.RAPIDAPI_KEY;
+const RAPID_HOST = 'zillow-com1.p.rapidapi.com';
+const HEADERS = { 'x-rapidapi-key': RAPID_KEY, 'x-rapidapi-host': RAPID_HOST };
 
 async function searchAddress(address) {
-  const json = await get(
-    `${BASE}/do/location-autocomplete?location=${encodeURIComponent(address)}&v=2`
-  );
-  const rows = (json.payload?.sections ?? []).flatMap((s) => s.rows ?? []);
-  return rows
-    .filter((r) => r.type === 1)
-    .map((r) => ({
-      id: r.id,
-      name: r.name,
-      subName: r.subName,
-      url: r.url,
-      propertyId: (r.url?.match(/\/home\/(\d+)/) ?? [])[1] ?? null,
-    }))
-    .filter((r) => r.propertyId);
+  if (!RAPID_KEY) throw new Error('RAPIDAPI_KEY not set');
+
+  const { data } = await axios.get('https://zillow-com1.p.rapidapi.com/searchAddress', {
+    params: { q: address },
+    headers: HEADERS,
+    timeout: 15000,
+  });
+
+  // Returns array of results
+  const results = Array.isArray(data) ? data : (data.results ?? []);
+  return results.slice(0, 8).map((r) => ({
+    id: r.zpid ?? r.id ?? String(Math.random()),
+    name: r.streetAddress ?? r.address ?? address,
+    subName: [r.city, r.state, r.zipcode].filter(Boolean).join(', '),
+    url: r.url ?? '',
+    propertyId: String(r.zpid ?? r.id ?? ''),
+  })).filter((r) => r.propertyId);
 }
 
 async function getPropertyDetails(propertyId) {
-  const [above, below] = await Promise.allSettled([
-    get(`${BASE}/api/home/details/aboveTheFold?propertyId=${propertyId}&accessLevel=1`),
-    get(`${BASE}/api/home/details/belowTheFold?propertyId=${propertyId}`),
+  if (!RAPID_KEY) throw new Error('RAPIDAPI_KEY not set');
+
+  const [propRes, schoolRes] = await Promise.allSettled([
+    axios.get('https://zillow-com1.p.rapidapi.com/property', {
+      params: { zpid: propertyId },
+      headers: HEADERS,
+      timeout: 15000,
+    }),
+    axios.get('https://zillow-com1.p.rapidapi.com/propertyExtendedSearch', {
+      params: { zpid: propertyId },
+      headers: HEADERS,
+      timeout: 15000,
+    }),
   ]);
 
-  const ap = above.status === 'fulfilled' ? (above.value.payload ?? {}) : {};
-  const bp = below.status === 'fulfilled' ? (below.value.payload ?? {}) : {};
+  const prop = propRes.status === 'fulfilled' ? propRes.value.data : {};
 
-  return normalizeProperty(propertyId, ap, bp);
+  return normalizeZillow(propertyId, prop);
 }
 
-function normalizeProperty(propertyId, ap, bp) {
-  const basic = ap.basicSummary ?? {};
-  const addr = ap.addressSectionInfo ?? {};
-  const pubRec = ap.publicRecordsInfo ?? {};
-  const transport = bp.transportationInfo ?? {};
-  const description = ap.remarks?.listingRemarks ?? '';
-  const amenities = extractAmenities(ap.amenitiesInfo);
-  const photos = extractPhotos(ap.mediaBrowserInfo?.photos ?? []);
-
-  const schools = (ap.schoolsAndDistrictsInfo?.schools ?? []).map((s) => ({
-    name: s.name ?? '',
-    level: s.levelCode === 'e' ? 'Elementary' : s.levelCode === 'm' ? 'Middle' : 'High',
-    rating: s.rating ?? null,
-    distance: s.distance ?? null,
-    grades: s.grades ?? '',
-    servesHome: s.servesHome ?? false,
-    type: s.type ?? '',
-  }));
+function normalizeZillow(propertyId, p) {
+  const description = p.description ?? '';
+  const amenities = extractAmenities(p);
+  const hasPool = detectPool(amenities, description, p);
+  const schools = extractSchools(p);
 
   return {
     propertyId,
-    redfinUrl: ap.url ? `https://www.redfin.com${ap.url}` : null,
+    redfinUrl: p.url ? `https://www.zillow.com${p.url}` : null,
     address: {
-      full: addr.streetAddress?.assembledAddress ?? '',
-      city: addr.city ?? '',
-      state: addr.state ?? '',
-      zip: addr.zip ?? '',
-      lat: addr.latitude ?? null,
-      lng: addr.longitude ?? null,
+      full: [p.streetAddress, p.unit].filter(Boolean).join(' '),
+      city: p.city ?? '',
+      state: p.state ?? '',
+      zip: p.zipcode ?? '',
+      lat: p.latitude ?? null,
+      lng: p.longitude ?? null,
     },
-    price: basic.price?.displayValue ?? null,
-    priceRaw: basic.price?.value ?? null,
-    beds: basic.beds ?? null,
-    baths: basic.baths ?? null,
-    sqft: basic.sqFt?.value ?? null,
-    lotSqft: pubRec.lotSqFt ?? null,
-    yearBuilt: pubRec.yearBuilt ?? null,
-    daysOnMarket: ap.listingMetadata?.daysOnMarket ?? null,
-    status: ap.listingMetadata?.statusType ?? null,
-    pricePerSqft: basic.pricePerSqFt?.displayValue ?? null,
+    price: p.price ? `$${Number(p.price).toLocaleString()}` : null,
+    priceRaw: p.price ?? null,
+    beds: p.bedrooms ?? null,
+    baths: p.bathrooms ?? null,
+    sqft: p.livingArea ?? null,
+    lotSqft: p.lotSize ?? null,
+    yearBuilt: p.yearBuilt ?? null,
+    daysOnMarket: p.daysOnZillow ?? null,
+    status: p.homeStatus ?? null,
+    pricePerSqft: p.pricePerSquareFoot ? `$${p.pricePerSquareFoot}` : null,
     schools,
     amenities,
-    hasPool: detectPool(amenities, description),
-    photos,
+    hasPool,
+    photos: extractPhotos(p),
     description,
-    walkScore: transport.walkScore?.value ?? null,
-    walkScoreDescription: transport.walkScore?.description ?? null,
-    bikeScore: transport.bikeScore?.value ?? null,
-    transitScore: transport.transitScore?.value ?? null,
+    walkScore: p.walkScore ?? null,
+    walkScoreDescription: null,
+    bikeScore: p.bikeScore ?? null,
+    transitScore: p.transitScore ?? null,
   };
 }
 
-function extractAmenities(amenitiesInfo) {
-  if (!amenitiesInfo) return [];
-  const results = [];
-  for (const sg of amenitiesInfo.superGroups ?? []) {
-    for (const a of sg.amenities ?? []) {
-      results.push({
-        label: a.redfin_label ?? a.header ?? '',
-        content: a.content ?? '',
-      });
-    }
+function extractAmenities(p) {
+  const out = [];
+  const atHome = p.atAGlanceFacts ?? [];
+  for (const f of atHome) {
+    out.push({ label: f.factLabel ?? '', content: f.factValue ?? '' });
   }
-  return results;
+  const features = p.resoFacts?.homeFeatures ?? [];
+  for (const f of features) {
+    out.push({ label: f, content: '' });
+  }
+  return out;
 }
 
-function extractPhotos(photos) {
+function detectPool(amenities, description, p) {
+  const re = /\bpool\b/i;
+  return (
+    re.test(description) ||
+    amenities.some((a) => re.test(a.label) || re.test(a.content)) ||
+    (p.resoFacts?.hasPrivatePool === true) ||
+    (p.resoFacts?.hasSpa === true)
+  );
+}
+
+function extractSchools(p) {
+  const raw = p.schools ?? p.nearbySchools ?? [];
+  return raw.map((s) => ({
+    name: s.name ?? s.schoolName ?? '',
+    level: levelFromGrades(s.grades ?? s.gradeRange ?? ''),
+    rating: s.rating ?? null,
+    distance: s.distance ?? null,
+    grades: s.grades ?? s.gradeRange ?? '',
+    servesHome: s.isAssigned ?? s.assigned ?? true,
+    type: s.schoolType ?? s.type ?? '',
+  }));
+}
+
+function levelFromGrades(grades) {
+  const s = String(grades).toLowerCase();
+  if (s.includes('k') || /^[pk]-[0-5]/.test(s) || s.includes('elementary')) return 'Elementary';
+  if (/[6-8]/.test(s) || s.includes('middle')) return 'Middle';
+  return 'High';
+}
+
+function extractPhotos(p) {
+  const photos = p.photos ?? p.originalPhotos ?? [];
   return photos
     .slice(0, 12)
-    .map((p) => p.photoUrls?.fullScreenPhotoUrl ?? p.photoUrls?.url ?? null)
+    .map((ph) => {
+      if (typeof ph === 'string') return ph;
+      return ph.mixedSources?.jpeg?.[0]?.url ?? ph.url ?? null;
+    })
     .filter(Boolean);
-}
-
-function detectPool(amenities, description) {
-  const re = /\bpool\b/i;
-  return amenities.some((a) => re.test(a.label) || re.test(a.content)) || re.test(description);
 }
 
 module.exports = { searchAddress, getPropertyDetails };

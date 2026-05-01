@@ -41,29 +41,24 @@ router.get('/details', async (req, res) => {
   }
 });
 
-// Debug endpoint — open in browser to diagnose Redfin connectivity
+// Debug endpoint — open in browser to diagnose API connectivity
 router.get('/debug', async (req, res) => {
   const axios = require('axios');
-  const key = process.env.SCRAPER_API_KEY;
-  const targetUrl =
-    'https://www.redfin.com/stingray/do/location-autocomplete?location=dallas+tx&v=2';
-  const fetchUrl = key
-    ? `http://api.scraperapi.com/?api_key=${key}&url=${encodeURIComponent(targetUrl)}`
-    : targetUrl;
-
+  const key = process.env.RAPIDAPI_KEY;
   try {
-    const result = await axios.get(fetchUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      timeout: 20000,
+    const result = await axios.get('https://zillow-com1.p.rapidapi.com/searchAddress', {
+      params: { q: 'Dallas TX' },
+      headers: { 'x-rapidapi-key': key, 'x-rapidapi-host': 'zillow-com1.p.rapidapi.com' },
+      timeout: 15000,
     });
     res.json({
-      scraperApiKeySet: !!key,
+      rapidApiKeySet: !!key,
       httpStatus: result.status,
-      dataPreview: String(result.data).slice(0, 300),
+      dataPreview: JSON.stringify(result.data).slice(0, 400),
     });
   } catch (err) {
     res.json({
-      scraperApiKeySet: !!key,
+      rapidApiKeySet: !!key,
       error: err.message,
       httpStatus: err.response?.status ?? null,
       dataPreview: String(err.response?.data ?? '').slice(0, 300),
